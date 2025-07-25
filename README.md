@@ -85,7 +85,8 @@ The node supports two input formats:
 
 All inputs expect:
 - **Format**: RGB8
-- **Resolution**: Any resolution (automatically detected from input)
+- **Resolution**: Automatically detected from input frame size
+- **Framerate**: Automatically detected from input timing
 - **Encoding parameter**: "rgb8"
 
 ### WebRTC Client Connection

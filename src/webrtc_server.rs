@@ -274,13 +274,12 @@ impl WebRTCServer {
         peer_id: &str,
         ws_sender: Arc<Mutex<futures::stream::SplitSink<WebSocket, Message>>>,
     ) -> anyhow::Result<gstreamer::Pipeline> {
-        // Use caps=any to accept any resolution and let GStreamer handle it
+        // Accept any resolution and framerate from input
+        // Initial caps will be set dynamically when first frame arrives
         let pipeline_str = format!(
-            "appsrc name=videosrc caps=video/x-raw,format=RGB \
+            "appsrc name=videosrc \
              is-live=true format=time do-timestamp=true ! \
              videoconvert ! \
-             videoscale ! \
-             video/x-raw ! \
              vp8enc deadline=1 ! \
              rtpvp8pay ! \
              application/x-rtp,media=video,encoding-name=VP8,payload=96 ! \
