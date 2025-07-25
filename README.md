@@ -1,32 +1,74 @@
 # dora-gst-webrtc-sink
 
-A dora-rs node that receives images and streams them via WebRTC with built-in signaling server. Supports multiple video sources and multiple clients per source.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=flat&logo=rust&logoColor=white)](https://www.rust-lang.org/)
+
+A WebRTC sink node for [dora-rs](https://github.com/dora-rs/dora) that streams video via WebRTC with built-in signaling server. Supports multiple video sources and multiple clients per source.
 
 ## Features
 
-- Receives RGB8 format images from dora-rs input
-- Streams video via WebRTC to multiple clients
-- Built-in WebRTC signaling server
-- Latest frame priority (channel buffer size of 1)
-- **Multiple video sources**: Handle multiple cameras/video streams simultaneously
-- **Multiple clients per source**: Each video source can serve multiple WebRTC clients
-- Dynamic video source management
+- 🎥 Stream RGB8 format video from dora-rs inputs
+- 📡 Built-in WebRTC signaling server (no external server needed)
+- 🔄 Real-time streaming with latest frame priority (buffer size 1)
+- 📹 **Multiple video sources**: Handle multiple cameras/video streams simultaneously
+- 👥 **Multiple clients per source**: Each video source can serve multiple WebRTC clients
+- 🔧 Dynamic video source management
+- ⚙️ Configurable signaling server port via environment variable
 
-## Environment Variables
+## Prerequisites
 
-- `SIGNALING_PORT`: WebSocket signaling server port (default: 8080)
+- Rust 1.70+
+- GStreamer 1.16+ with WebRTC plugins
+- [dora-rs](https://github.com/dora-rs/dora)
+
+### Installing GStreamer
+
+#### Ubuntu/Debian
+```bash
+sudo apt-get update
+sudo apt-get install \
+    libgstreamer1.0-dev \
+    libgstreamer-plugins-base1.0-dev \
+    libgstreamer-plugins-bad1.0-dev \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    gstreamer1.0-libav
+```
+
+#### macOS
+```bash
+brew install gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly
+```
+
+#### Windows
+Download and install from [GStreamer official website](https://gstreamer.freedesktop.org/download/)
+
+## Installation
+
+```bash
+git clone https://github.com/yourusername/dora-gst-webrtc-sink.git
+cd dora-gst-webrtc-sink
+cargo build --release
+```
 
 ## Usage
 
-### Running the Node
+### Quick Start
 
+1. Run the example demo:
 ```bash
-# Set the signaling server port (optional)
-export SIGNALING_PORT=8080
-
-# Run as part of a dora dataflow
-dora start dataflow.yml
+cd example
+./run_demo.sh
 ```
+
+2. Open `example/webrtc-viewer.html` in your web browser
+3. The viewer will automatically connect to both camera streams
+
+### Environment Variables
+
+- `SIGNALING_PORT`: WebSocket signaling server port (default: 8080)
+- `RUST_LOG`: Log level (default: info)
 
 ### Input Format
 
@@ -34,42 +76,31 @@ The node supports two input formats:
 
 1. **Legacy format** (backward compatible):
    - Input ID: `image`
-   - This maps to the default video source (`default`)
+   - Maps to the default video source
 
 2. **Multi-camera format**:
    - Input ID: `<video_id>/frame`
    - Example: `camera1/frame`, `camera2/frame`, `front_camera/frame`
    - Each unique `video_id` creates a separate video stream
 
-All inputs expect the following metadata:
-- `encoding`: "rgb8" (currently only RGB8 is supported)
-- `width`: Image width (currently fixed at 640)
-- `height`: Image height (currently fixed at 480)
+All inputs expect:
+- **Format**: RGB8
+- **Resolution**: 640x480 (currently fixed)
+- **Encoding parameter**: "rgb8"
 
 ### WebRTC Client Connection
 
-1. Connect to the WebSocket signaling server at `ws://localhost:8080/<video_id>`
-   - Example: `ws://localhost:8080/camera1`
-   - For legacy support: `ws://localhost:8080/default`
-2. Send an offer SDP:
-   ```json
-   {
-     "type": "offer",
-     "sdp": "...",
-     "id": "client-id"
-   }
-   ```
-3. Receive answer SDP and ICE candidates
-4. Start receiving the video stream
+Connect to the WebSocket signaling server at:
+```
+ws://localhost:8080/<video_id>
+```
 
-### Multi-Camera HTML Client
+Example URLs:
+- `ws://localhost:8080/camera1` - First camera
+- `ws://localhost:8080/camera2` - Second camera
+- `ws://localhost:8080/default` - Legacy support
 
-Use the provided `example/webrtc-viewer-multi.html` to connect to multiple video sources simultaneously. The client supports:
-- Dynamic addition/removal of video streams
-- Individual connection control per stream
-- Real-time status and logging per stream
-
-## Example Dataflow Configurations
+## Example Dataflow Configuration
 
 ### Single Camera (Legacy)
 ```yaml
@@ -82,57 +113,115 @@ nodes:
   - id: webrtc-sink
     path: dora-gst-webrtc-sink
     inputs:
-      - image: camera/image
+      image: camera/image
 ```
 
 ### Multiple Cameras
 ```yaml
 nodes:
-  - id: front-camera
+  - id: camera1
     path: camera-node
     outputs:
-      - camera1/frame
+      - frame
   
-  - id: rear-camera
+  - id: camera2
     path: camera-node
     outputs:
-      - camera2/frame
+      - frame
   
   - id: webrtc-sink
     path: dora-gst-webrtc-sink
     inputs:
-      - source: front-camera/camera1/frame
-        queue_size: 1
-      - source: rear-camera/camera2/frame
-        queue_size: 1
+      camera1/frame: camera1/frame
+      camera2/frame: camera2/frame
 ```
 
-## Example Scripts
+## Web Client
 
-### Single Camera Demo
+The included `webrtc-viewer.html` provides:
+- Automatic connection to multiple video streams
+- Dynamic addition/removal of video streams
+- Individual connection control per stream
+- Real-time status and logging
+
+## Architecture
+
+```
+┌─────────────┐     ┌──────────────────┐     ┌─────────────┐
+│ Camera Node │────▶│ dora-gst-webrtc  │────▶│ Web Browser │
+│   (RGB8)    │     │      -sink       │     │  (WebRTC)   │
+└─────────────┘     │                  │     └─────────────┘
+                    │  ┌─────────────┐ │
+┌─────────────┐     │  │  Signaling  │ │     ┌─────────────┐
+│ Camera Node │────▶│  │   Server    │ │────▶│ Web Browser │
+│   (RGB8)    │     │  └─────────────┘ │     │  (WebRTC)   │
+└─────────────┘     └──────────────────┘     └─────────────┘
+```
+
+## Development
+
+### Building from Source
 ```bash
-cd example
-./run_demo.sh
-# Open webrtc-viewer.html in your browser
+cargo build --release
 ```
 
-### Multi-Camera Demo
+### Running Tests
 ```bash
-cd example
-./run_demo_multi.sh
-# Open webrtc-viewer-multi.html in your browser
+cargo test
 ```
 
-## Dependencies
+### Code Structure
+- `src/main.rs` - Main entry point and dora node integration
+- `src/webrtc_server.rs` - WebRTC server implementation
+- `src/peer_connection.rs` - Individual peer connection management
+- `src/video_source_manager.rs` - Multiple video source management
+- `src/signaling.rs` - WebRTC signaling protocol messages
 
-- GStreamer with WebRTC support
-- VP8 video codec
-- STUN server (uses Google's public STUN server by default)
+## Contributing
 
-## Notes
+Contributions are welcome! Please feel free to submit a Pull Request.
 
-- The video is encoded as VP8 at 640x480 resolution, 30fps
-- Uses lossy encoding with deadline=1 for low latency
-- Requires GStreamer 1.16+ with webrtcbin element
-- Each video source maintains its own pipeline and can serve multiple clients
-- Video sources are created on-demand when the first client connects
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- [dora-rs](https://github.com/dora-rs/dora) - Dataflow-oriented robotics architecture
+- [GStreamer](https://gstreamer.freedesktop.org/) - Multimedia framework
+- [webrtcbin](https://gstreamer.freedesktop.org/documentation/webrtc/index.html) - GStreamer WebRTC implementation
+
+## Troubleshooting
+
+### GStreamer WebRTC plugin not found
+Ensure GStreamer plugins are properly installed:
+```bash
+gst-inspect-1.0 webrtcbin
+```
+
+### Connection issues
+1. Check firewall settings for port 8080 (signaling)
+2. Ensure STUN server is accessible (uses Google's public STUN by default)
+3. Check browser console for WebRTC errors
+
+### Performance issues
+- Adjust VP8 encoding parameters in `create_pipeline()`
+- Consider reducing resolution or framerate
+- Check CPU usage during encoding
+
+## Roadmap
+
+- [ ] Configurable video resolution and framerate
+- [ ] H.264 codec support for better compatibility
+- [ ] TURN server support for NAT traversal
+- [ ] Connection quality metrics
+
+## Contact
+
+For questions, issues, or contributions, please use the GitHub issue tracker.
