@@ -4,41 +4,34 @@ use futures::stream::StreamExt;
 use log::info;
 use std::env;
 use std::sync::Arc;
-use tokio::sync::mpsc;
 use uuid::Uuid;
 use warp::Filter;
 
 mod peer_connection;
 mod signaling;
+mod video_source_manager;
 mod webrtc_server;
 
-use webrtc_server::WebRTCServer;
+use video_source_manager::VideoSourceManager;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     env_logger::init();
     gstreamer::init()?;
 
-    let (frame_sender, mut frame_receiver) = mpsc::channel::<Vec<u8>>(1);
-    let frame_sender_clone = frame_sender.clone();
-    let server = Arc::new(WebRTCServer::new(frame_sender_clone));
+    let source_manager = Arc::new(VideoSourceManager::new());
 
-    let server_clone = server.clone();
-    tokio::spawn(async move {
-        while let Some(frame) = frame_receiver.recv().await {
-            server_clone.send_frame_to_peers(&frame);
-        }
-    });
-
-    let server_clone = server.clone();
-    let websocket_route = warp::path("ws")
+    // WebSocket route with video_id parameter
+    let source_manager_clone = source_manager.clone();
+    let websocket_route = warp::path!(String)
         .and(warp::ws())
-        .map(move |ws: warp::ws::Ws| {
-            let server = server_clone.clone();
+        .map(move |video_id: String, ws: warp::ws::Ws| {
+            let source_manager = source_manager_clone.clone();
             ws.on_upgrade(move |websocket| async move {
-                let id = Uuid::new_v4().to_string();
-                info!("New client connected: {}", id);
-                server.handle_websocket(websocket, id).await;
+                let (server, _) = source_manager.get_or_create_source(&video_id);
+                let client_id = Uuid::new_v4().to_string();
+                info!("New client {} connected to video source: {}", client_id, video_id);
+                server.handle_websocket(websocket, client_id).await;
             })
         });
 
@@ -49,6 +42,7 @@ async fn main() -> eyre::Result<()> {
 
     let server_task = tokio::spawn(async move {
         info!("WebRTC signaling server listening on port {}", port);
+        info!("Connect to ws://localhost:{}/VIDEO_ID for specific video streams", port);
         warp::serve(websocket_route)
             .run(([0, 0, 0, 0], port))
             .await;
@@ -59,7 +53,20 @@ async fn main() -> eyre::Result<()> {
     while let Some(event) = events.next().await {
         match event {
             Event::Input { id, data, metadata } => {
-                if id.as_str() == "image" {
+                // Parse input ID to extract video_id
+                // Expected format: "video_id/frame" or just "image" for backward compatibility
+                let parts: Vec<&str> = id.as_str().split('/').collect();
+                
+                let (video_id, is_frame) = if parts.len() == 2 && parts[1] == "frame" {
+                    (parts[0].to_string(), true)
+                } else if id.as_str() == "image" {
+                    // Backward compatibility: treat "image" as "default/frame"
+                    ("default".to_string(), true)
+                } else {
+                    continue; // Skip non-frame inputs
+                };
+
+                if is_frame {
                     let encoding = if let Some(param) = metadata.parameters.get("encoding") {
                         match param {
                             dora_node_api::Parameter::String(s) => s.to_lowercase(),
@@ -72,6 +79,7 @@ async fn main() -> eyre::Result<()> {
                     if encoding == "rgb8" {
                         if let Some(data_arr) = data.as_any().downcast_ref::<UInt8Array>() {
                             let bytes = data_arr.values().to_vec();
+                            let (_, frame_sender) = source_manager.get_or_create_source(&video_id);
                             let _ = frame_sender.send(bytes).await;
                         }
                     }

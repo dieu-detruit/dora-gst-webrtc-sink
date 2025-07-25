@@ -26,12 +26,17 @@ if [ $? -ne 0 ]; then
 fi
 
 echo
-echo "Starting dora dataflow..."
-echo "WebRTC signaling server will be available at: ws://localhost:8080/ws"
+echo "Starting multi-camera WebRTC streaming demo..."
+echo "WebRTC signaling server will be available at: ws://localhost:8080/<video_id>"
 echo
-echo "To view the stream:"
+echo "Available video streams:"
+echo "  - camera1: Moving ball pattern (ws://localhost:8080/camera1)"
+echo "  - camera2: SMPTE test pattern (ws://localhost:8080/camera2)"
+echo
+echo "To view the streams:"
 echo "1. Open 'webrtc-viewer.html' in a web browser"
-echo "2. Click 'Connect' button"
+echo "2. Both cameras will connect automatically"
+echo "3. You can add more video streams using the interface"
 echo
 echo "Press Ctrl+C to stop"
 echo

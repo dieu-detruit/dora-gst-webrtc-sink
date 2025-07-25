@@ -7,7 +7,7 @@
     <style>
         body {
             font-family: Arial, sans-serif;
-            max-width: 800px;
+            max-width: 1200px;
             margin: 0 auto;
             padding: 20px;
             background-color: #f0f0f0;
@@ -22,29 +22,69 @@
             color: #333;
             text-align: center;
         }
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            align-items: center;
+        }
+        .input-group label {
+            font-weight: bold;
+            min-width: 100px;
+        }
+        .input-group input {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .video-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-top: 20px;
+            justify-content: flex-start;
+        }
         .video-container {
-            text-align: center;
-            margin: 20px 0;
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            width: 360px;  /* Fixed width */
+        }
+        .video-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .video-title {
+            font-weight: bold;
+            color: #333;
+            font-size: 14px;
         }
         video {
-            max-width: 100%;
+            width: 100%;
+            height: 270px;  /* 4:3 aspect ratio for 360px width */
             border: 2px solid #ddd;
             border-radius: 4px;
             background-color: #000;
+            object-fit: contain;  /* Maintain aspect ratio */
         }
         .controls {
             text-align: center;
-            margin: 20px 0;
+            margin: 10px 0;
         }
         button {
             background-color: #4CAF50;
             color: white;
-            padding: 10px 20px;
+            padding: 8px 16px;
             border: none;
             border-radius: 4px;
             cursor: pointer;
-            font-size: 16px;
-            margin: 0 10px;
+            font-size: 14px;
+            margin: 0 5px;
         }
         button:hover {
             background-color: #45a049;
@@ -53,11 +93,18 @@
             background-color: #cccccc;
             cursor: not-allowed;
         }
+        button.disconnect {
+            background-color: #f44336;
+        }
+        button.disconnect:hover {
+            background-color: #da190b;
+        }
         .status {
             text-align: center;
-            margin: 10px 0;
-            padding: 10px;
+            margin: 8px 0;
+            padding: 6px;
             border-radius: 4px;
+            font-size: 11px;
         }
         .status.connected {
             background-color: #d4edda;
@@ -75,11 +122,11 @@
             background-color: #f8f9fa;
             border: 1px solid #dee2e6;
             border-radius: 4px;
-            padding: 10px;
-            margin-top: 20px;
+            padding: 8px;
+            margin-top: 8px;
             font-family: monospace;
-            font-size: 12px;
-            max-height: 200px;
+            font-size: 10px;
+            max-height: 100px;
             overflow-y: auto;
         }
     </style>
@@ -88,229 +135,279 @@
     <div class="container">
         <h1>WebRTC Viewer</h1>
         
-        <div class="video-container">
-            <video id="remoteVideo" autoplay playsinline></video>
+        <div class="input-group">
+            <label for="videoId">Video ID:</label>
+            <input type="text" id="videoId" placeholder="Enter video ID (e.g., camera1, camera2, default)" value="default">
+            <button onclick="addVideoStream()">Add Video Stream</button>
         </div>
         
-        <div class="controls">
-            <button id="connectBtn" onclick="connect()">Connect</button>
-            <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
-        </div>
-        
-        <div id="status" class="status disconnected">Disconnected</div>
-        
-        <div class="log" id="log"></div>
+        <div id="videoGrid" class="video-grid"></div>
     </div>
 
     <script>
-        let ws = null;
-        let pc = null;
-        let clientId = null;
+        let videoStreams = new Map();
+        let streamIdCounter = 0;
 
-        function log(message) {
-            const logDiv = document.getElementById('log');
-            const timestamp = new Date().toLocaleTimeString();
-            logDiv.innerHTML += `[${timestamp}] ${message}<br>`;
-            logDiv.scrollTop = logDiv.scrollHeight;
-        }
+        class VideoStream {
+            constructor(videoId) {
+                this.videoId = videoId;
+                this.streamId = `stream-${streamIdCounter++}`;
+                this.ws = null;
+                this.pc = null;
+                this.clientId = null;
+                this.container = null;
+                this.videoElement = null;
+                this.statusElement = null;
+                this.logElement = null;
+            }
 
-        function updateStatus(status, className) {
-            const statusDiv = document.getElementById('status');
-            statusDiv.textContent = status;
-            statusDiv.className = 'status ' + className;
-        }
+            log(message) {
+                const timestamp = new Date().toLocaleTimeString();
+                if (this.logElement) {
+                    this.logElement.innerHTML += `[${timestamp}] ${message}<br>`;
+                    this.logElement.scrollTop = this.logElement.scrollHeight;
+                }
+            }
 
-        async function connect() {
-            try {
-                updateStatus('Connecting...', 'connecting');
-                document.getElementById('connectBtn').disabled = true;
+            updateStatus(status, className) {
+                if (this.statusElement) {
+                    this.statusElement.textContent = status;
+                    this.statusElement.className = 'status ' + className;
+                }
+            }
 
-                // Generate client ID
-                clientId = 'client-' + Math.random().toString(36).substr(2, 9);
-                log(`Client ID: ${clientId}`);
+            createUI() {
+                const container = document.createElement('div');
+                container.className = 'video-container';
+                container.id = this.streamId;
 
-                // Connect to WebSocket signaling server
-                ws = new WebSocket('ws://localhost:8080/ws');
-                
-                ws.onopen = async () => {
-                    log('WebSocket connected');
-                    await createPeerConnection();
-                    await createOffer();
+                container.innerHTML = `
+                    <div class="video-header">
+                        <div class="video-title">Video ID: ${this.videoId}</div>
+                        <button class="disconnect" onclick="removeVideoStream('${this.streamId}')">×</button>
+                    </div>
+                    <video id="video-${this.streamId}" autoplay playsinline></video>
+                    <div class="controls">
+                        <button id="connect-${this.streamId}" onclick="connectStream('${this.streamId}')">Connect</button>
+                        <button id="disconnect-${this.streamId}" onclick="disconnectStream('${this.streamId}')" disabled>Disconnect</button>
+                    </div>
+                    <div id="status-${this.streamId}" class="status disconnected">Disconnected</div>
+                    <div id="log-${this.streamId}" class="log"></div>
+                `;
+
+                document.getElementById('videoGrid').appendChild(container);
+
+                this.container = container;
+                this.videoElement = document.getElementById(`video-${this.streamId}`);
+                this.statusElement = document.getElementById(`status-${this.streamId}`);
+                this.logElement = document.getElementById(`log-${this.streamId}`);
+            }
+
+            async connect() {
+                try {
+                    this.updateStatus('Connecting...', 'connecting');
+                    document.getElementById(`connect-${this.streamId}`).disabled = true;
+
+                    // Generate client ID
+                    this.clientId = 'client-' + Math.random().toString(36).substr(2, 9);
+                    this.log(`Client ID: ${this.clientId}`);
+
+                    // Connect to WebSocket signaling server with video ID in path
+                    const wsUrl = `ws://localhost:8080/${this.videoId}`;
+                    this.log(`Connecting to ${wsUrl}`);
+                    this.ws = new WebSocket(wsUrl);
+                    
+                    this.ws.onopen = async () => {
+                        this.log('WebSocket connected');
+                        await this.createPeerConnection();
+                        await this.createOffer();
+                    };
+
+                    this.ws.onmessage = async (event) => {
+                        const data = JSON.parse(event.data);
+                        this.log(`Received: ${data.type}`);
+
+                        switch (data.type) {
+                            case 'answer':
+                                await this.handleAnswer(data.sdp);
+                                break;
+                            case 'ice':
+                                await this.handleIceCandidate(data.candidate, data.sdpMLineIndex);
+                                break;
+                        }
+                    };
+
+                    this.ws.onerror = (error) => {
+                        this.log(`WebSocket error: ${error}`);
+                        this.updateStatus('Connection Error', 'disconnected');
+                    };
+
+                    this.ws.onclose = () => {
+                        this.log('WebSocket disconnected');
+                        this.updateStatus('Disconnected', 'disconnected');
+                        this.cleanup();
+                    };
+
+                } catch (error) {
+                    this.log(`Connection error: ${error.message}`);
+                    this.updateStatus('Connection Failed', 'disconnected');
+                    this.cleanup();
+                }
+            }
+
+            async createPeerConnection() {
+                const configuration = {
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' }
+                    ]
                 };
 
-                ws.onmessage = async (event) => {
-                    const data = JSON.parse(event.data);
-                    log(`Received: ${data.type}`);
+                this.pc = new RTCPeerConnection(configuration);
 
-                    switch (data.type) {
-                        case 'answer':
-                            await handleAnswer(data.sdp);
-                            break;
-                        case 'ice':
-                            await handleIceCandidate(data.candidate, data.sdpMLineIndex);
-                            break;
+                this.pc.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        this.ws.send(JSON.stringify({
+                            type: 'ice',
+                            candidate: event.candidate.candidate,
+                            sdpMLineIndex: event.candidate.sdpMLineIndex,
+                            id: this.clientId
+                        }));
                     }
                 };
 
-                ws.onerror = (error) => {
-                    log(`WebSocket error: ${error}`);
-                    updateStatus('Connection Error', 'disconnected');
+                this.pc.oniceconnectionstatechange = () => {
+                    this.log(`ICE connection state: ${this.pc.iceConnectionState}`);
+                    if (this.pc.iceConnectionState === 'connected') {
+                        this.updateStatus('Connected', 'connected');
+                        document.getElementById(`disconnect-${this.streamId}`).disabled = false;
+                    } else if (this.pc.iceConnectionState === 'failed' || this.pc.iceConnectionState === 'disconnected') {
+                        this.updateStatus('Connection Lost', 'disconnected');
+                    }
                 };
 
-                ws.onclose = () => {
-                    log('WebSocket disconnected');
-                    updateStatus('Disconnected', 'disconnected');
-                    cleanup();
+                this.pc.ontrack = (event) => {
+                    this.log(`Received remote track: ${event.track.kind}`);
+                    if (event.streams && event.streams[0]) {
+                        this.videoElement.srcObject = event.streams[0];
+                        this.log(`Video element srcObject set`);
+                    }
                 };
 
-            } catch (error) {
-                log(`Connection error: ${error.message}`);
-                updateStatus('Connection Failed', 'disconnected');
-                cleanup();
+                // Add a transceiver for receiving video
+                this.pc.addTransceiver('video', { direction: 'recvonly' });
             }
-        }
 
-        async function createPeerConnection() {
-            const configuration = {
-                iceServers: [
-                    { urls: 'stun:stun.l.google.com:19302' }
-                ]
-            };
-
-            pc = new RTCPeerConnection(configuration);
-
-            pc.onicecandidate = (event) => {
-                if (event.candidate) {
-                    ws.send(JSON.stringify({
-                        type: 'ice',
-                        candidate: event.candidate.candidate,
-                        sdpMLineIndex: event.candidate.sdpMLineIndex,
-                        id: clientId
-                    }));
-                }
-            };
-
-            pc.oniceconnectionstatechange = () => {
-                log(`ICE connection state: ${pc.iceConnectionState}`);
-                if (pc.iceConnectionState === 'connected') {
-                    updateStatus('Connected', 'connected');
-                    document.getElementById('disconnectBtn').disabled = false;
-                } else if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
-                    updateStatus('Connection Lost', 'disconnected');
-                }
-            };
-            
-            pc.onconnectionstatechange = () => {
-                log(`Peer connection state: ${pc.connectionState}`);
-            };
-            
-            pc.onsignalingstatechange = () => {
-                log(`Signaling state: ${pc.signalingState}`);
-            };
-
-            pc.ontrack = (event) => {
-                log(`Received remote track: ${event.track.kind}`);
-                const remoteVideo = document.getElementById('remoteVideo');
-                if (event.streams && event.streams[0]) {
-                    remoteVideo.srcObject = event.streams[0];
-                    log(`Video element srcObject set, readyState: ${remoteVideo.readyState}`);
-                    
-                    // Monitor video element state
-                    remoteVideo.onloadedmetadata = () => {
-                        log(`Video metadata loaded: ${remoteVideo.videoWidth}x${remoteVideo.videoHeight}`);
-                    };
-                    remoteVideo.onplaying = () => {
-                        log('Video started playing');
-                    };
-                    remoteVideo.oncanplay = () => {
-                        log('Video can play');
-                    };
-                } else {
-                    log('No streams in track event');
-                }
-            };
-
-            // Add a transceiver for receiving video
-            pc.addTransceiver('video', { direction: 'recvonly' });
-        }
-
-        async function createOffer() {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            
-            ws.send(JSON.stringify({
-                type: 'offer',
-                sdp: offer.sdp,
-                id: clientId
-            }));
-            
-            log('Sent offer');
-        }
-
-        async function handleAnswer(sdp) {
-            log(`Received answer SDP (length: ${sdp.length})`);
-            
-            // Check if SDP contains video media
-            if (sdp.includes('m=video')) {
-                log('Answer contains video media');
-                const videoLine = sdp.split('\n').find(line => line.startsWith('m=video'));
-                log(`Video line: ${videoLine}`);
-            } else {
-                log('WARNING: Answer does not contain video media');
-            }
-            
-            const answer = new RTCSessionDescription({
-                type: 'answer',
-                sdp: sdp
-            });
-            await pc.setRemoteDescription(answer);
-            log('Set remote description (answer)');
-            
-            // Check statistics after setting answer
-            setTimeout(async () => {
-                try {
-                    const stats = await pc.getStats();
-                    stats.forEach(report => {
-                        if (report.type === 'inbound-rtp' && report.mediaType === 'video') {
-                            log(`Video stats: bytesReceived=${report.bytesReceived}, packetsReceived=${report.packetsReceived}`);
-                        }
-                    });
-                } catch (e) {
-                    log(`Error getting stats: ${e.message}`);
-                }
-            }, 2000);
-        }
-
-        async function handleIceCandidate(candidate, sdpMLineIndex) {
-            try {
-                await pc.addIceCandidate(new RTCIceCandidate({
-                    candidate: candidate,
-                    sdpMLineIndex: sdpMLineIndex
+            async createOffer() {
+                const offer = await this.pc.createOffer();
+                await this.pc.setLocalDescription(offer);
+                
+                this.ws.send(JSON.stringify({
+                    type: 'offer',
+                    sdp: offer.sdp,
+                    id: this.clientId
                 }));
-                log('Added ICE candidate');
-            } catch (error) {
-                log(`Error adding ICE candidate: ${error.message}`);
+                
+                this.log('Sent offer');
+            }
+
+            async handleAnswer(sdp) {
+                this.log(`Received answer SDP (length: ${sdp.length})`);
+                
+                const answer = new RTCSessionDescription({
+                    type: 'answer',
+                    sdp: sdp
+                });
+                await this.pc.setRemoteDescription(answer);
+                this.log('Set remote description (answer)');
+            }
+
+            async handleIceCandidate(candidate, sdpMLineIndex) {
+                try {
+                    await this.pc.addIceCandidate(new RTCIceCandidate({
+                        candidate: candidate,
+                        sdpMLineIndex: sdpMLineIndex
+                    }));
+                    this.log('Added ICE candidate');
+                } catch (error) {
+                    this.log(`Error adding ICE candidate: ${error.message}`);
+                }
+            }
+
+            disconnect() {
+                this.log('Disconnecting...');
+                this.cleanup();
+                this.updateStatus('Disconnected', 'disconnected');
+            }
+
+            cleanup() {
+                if (this.pc) {
+                    this.pc.close();
+                    this.pc = null;
+                }
+                if (this.ws) {
+                    this.ws.close();
+                    this.ws = null;
+                }
+                document.getElementById(`connect-${this.streamId}`).disabled = false;
+                document.getElementById(`disconnect-${this.streamId}`).disabled = true;
+            }
+
+            destroy() {
+                this.disconnect();
+                if (this.container) {
+                    this.container.remove();
+                }
             }
         }
 
-        function disconnect() {
-            log('Disconnecting...');
-            cleanup();
-            updateStatus('Disconnected', 'disconnected');
+        function addVideoStream() {
+            const videoId = document.getElementById('videoId').value.trim();
+            if (!videoId) {
+                alert('Please enter a video ID');
+                return;
+            }
+
+            const stream = new VideoStream(videoId);
+            videoStreams.set(stream.streamId, stream);
+            stream.createUI();
+            stream.connect();
         }
 
-        function cleanup() {
-            if (pc) {
-                pc.close();
-                pc = null;
+        function connectStream(streamId) {
+            const stream = videoStreams.get(streamId);
+            if (stream) {
+                stream.connect();
             }
-            if (ws) {
-                ws.close();
-                ws = null;
-            }
-            document.getElementById('connectBtn').disabled = false;
-            document.getElementById('disconnectBtn').disabled = true;
         }
+
+        function disconnectStream(streamId) {
+            const stream = videoStreams.get(streamId);
+            if (stream) {
+                stream.disconnect();
+            }
+        }
+
+        function removeVideoStream(streamId) {
+            const stream = videoStreams.get(streamId);
+            if (stream) {
+                stream.destroy();
+                videoStreams.delete(streamId);
+            }
+        }
+
+        // Add default streams on load
+        window.onload = () => {
+            // Add camera1
+            document.getElementById('videoId').value = 'camera1';
+            addVideoStream();
+            
+            // Add camera2
+            document.getElementById('videoId').value = 'camera2';
+            addVideoStream();
+            
+            // Reset input to camera1 for manual additions
+            document.getElementById('videoId').value = 'camera1';
+        };
     </script>
 </body>
 </html>
