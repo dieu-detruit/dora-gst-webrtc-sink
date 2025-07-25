@@ -163,10 +163,6 @@ impl WebRTCServer {
         
         // Give pipeline time to initialize
         std::thread::sleep(std::time::Duration::from_millis(200));
-        
-        // Send a test frame to ensure the pipeline is ready
-        let test_frame = vec![0u8; 640 * 480 * 3];
-        self.send_frame_to_peers(&test_frame);
 
         // Connect to pad-added signal to ensure pipeline is ready
         webrtcbin.connect("pad-added", false, move |values| {
@@ -278,10 +274,13 @@ impl WebRTCServer {
         peer_id: &str,
         ws_sender: Arc<Mutex<futures::stream::SplitSink<WebSocket, Message>>>,
     ) -> anyhow::Result<gstreamer::Pipeline> {
+        // Use caps=any to accept any resolution and let GStreamer handle it
         let pipeline_str = format!(
-            "appsrc name=videosrc caps=video/x-raw,format=RGB,width=640,height=480,framerate=30/1 \
-             is-live=true format=time ! \
+            "appsrc name=videosrc caps=video/x-raw,format=RGB \
+             is-live=true format=time do-timestamp=true ! \
              videoconvert ! \
+             videoscale ! \
+             video/x-raw ! \
              vp8enc deadline=1 ! \
              rtpvp8pay ! \
              application/x-rtp,media=video,encoding-name=VP8,payload=96 ! \

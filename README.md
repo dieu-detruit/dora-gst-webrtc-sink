@@ -85,7 +85,7 @@ The node supports two input formats:
 
 All inputs expect:
 - **Format**: RGB8
-- **Resolution**: 640x480 (currently fixed)
+- **Resolution**: Any resolution (automatically detected from input)
 - **Encoding parameter**: "rgb8"
 
 ### WebRTC Client Connection
@@ -217,10 +217,10 @@ gst-inspect-1.0 webrtcbin
 
 ## Roadmap
 
-- [ ] Configurable video resolution and framerate
 - [ ] H.264 codec support for better compatibility
 - [ ] TURN server support for NAT traversal
 - [ ] Connection quality metrics
+- [ ] Support for additional video formats (NV12, I420)
 
 ## Contact
 
