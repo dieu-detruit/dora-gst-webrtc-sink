@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Viewer - dora-gst-webrtc-sink</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .video-container {
+            text-align: center;
+            margin: 20px 0;
+        }
+        video {
+            max-width: 100%;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            background-color: #000;
+        }
+        .controls {
+            text-align: center;
+            margin: 20px 0;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 0 10px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .status {
+            text-align: center;
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .status.connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status.disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .status.connecting {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        .log {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            margin-top: 20px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WebRTC Viewer</h1>
+        
+        <div class="video-container">
+            <video id="remoteVideo" autoplay playsinline></video>
+        </div>
+        
+        <div class="controls">
+            <button id="connectBtn" onclick="connect()">Connect</button>
+            <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+        </div>
+        
+        <div id="status" class="status disconnected">Disconnected</div>
+        
+        <div class="log" id="log"></div>
+    </div>
+
+    <script>
+        let ws = null;
+        let pc = null;
+        let clientId = null;
+
+        function log(message) {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            logDiv.innerHTML += `[${timestamp}] ${message}<br>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function updateStatus(status, className) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = status;
+            statusDiv.className = 'status ' + className;
+        }
+
+        async function connect() {
+            try {
+                updateStatus('Connecting...', 'connecting');
+                document.getElementById('connectBtn').disabled = true;
+
+                // Generate client ID
+                clientId = 'client-' + Math.random().toString(36).substr(2, 9);
+                log(`Client ID: ${clientId}`);
+
+                // Connect to WebSocket signaling server
+                ws = new WebSocket('ws://localhost:8080/ws');
+                
+                ws.onopen = async () => {
+                    log('WebSocket connected');
+                    await createPeerConnection();
+                    await createOffer();
+                };
+
+                ws.onmessage = async (event) => {
+                    const data = JSON.parse(event.data);
+                    log(`Received: ${data.type}`);
+
+                    switch (data.type) {
+                        case 'answer':
+                            await handleAnswer(data.sdp);
+                            break;
+                        case 'ice':
+                            await handleIceCandidate(data.candidate, data.sdpMLineIndex);
+                            break;
+                    }
+                };
+
+                ws.onerror = (error) => {
+                    log(`WebSocket error: ${error}`);
+                    updateStatus('Connection Error', 'disconnected');
+                };
+
+                ws.onclose = () => {
+                    log('WebSocket disconnected');
+                    updateStatus('Disconnected', 'disconnected');
+                    cleanup();
+                };
+
+            } catch (error) {
+                log(`Connection error: ${error.message}`);
+                updateStatus('Connection Failed', 'disconnected');
+                cleanup();
+            }
+        }
+
+        async function createPeerConnection() {
+            const configuration = {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' }
+                ]
+            };
+
+            pc = new RTCPeerConnection(configuration);
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    ws.send(JSON.stringify({
+                        type: 'ice',
+                        candidate: event.candidate.candidate,
+                        sdpMLineIndex: event.candidate.sdpMLineIndex,
+                        id: clientId
+                    }));
+                }
+            };
+
+            pc.oniceconnectionstatechange = () => {
+                log(`ICE connection state: ${pc.iceConnectionState}`);
+                if (pc.iceConnectionState === 'connected') {
+                    updateStatus('Connected', 'connected');
+                    document.getElementById('disconnectBtn').disabled = false;
+                } else if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+                    updateStatus('Connection Lost', 'disconnected');
+                }
+            };
+            
+            pc.onconnectionstatechange = () => {
+                log(`Peer connection state: ${pc.connectionState}`);
+            };
+            
+            pc.onsignalingstatechange = () => {
+                log(`Signaling state: ${pc.signalingState}`);
+            };
+
+            pc.ontrack = (event) => {
+                log(`Received remote track: ${event.track.kind}`);
+                const remoteVideo = document.getElementById('remoteVideo');
+                if (event.streams && event.streams[0]) {
+                    remoteVideo.srcObject = event.streams[0];
+                    log(`Video element srcObject set, readyState: ${remoteVideo.readyState}`);
+                    
+                    // Monitor video element state
+                    remoteVideo.onloadedmetadata = () => {
+                        log(`Video metadata loaded: ${remoteVideo.videoWidth}x${remoteVideo.videoHeight}`);
+                    };
+                    remoteVideo.onplaying = () => {
+                        log('Video started playing');
+                    };
+                    remoteVideo.oncanplay = () => {
+                        log('Video can play');
+                    };
+                } else {
+                    log('No streams in track event');
+                }
+            };
+
+            // Add a transceiver for receiving video
+            pc.addTransceiver('video', { direction: 'recvonly' });
+        }
+
+        async function createOffer() {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            
+            ws.send(JSON.stringify({
+                type: 'offer',
+                sdp: offer.sdp,
+                id: clientId
+            }));
+            
+            log('Sent offer');
+        }
+
+        async function handleAnswer(sdp) {
+            log(`Received answer SDP (length: ${sdp.length})`);
+            
+            // Check if SDP contains video media
+            if (sdp.includes('m=video')) {
+                log('Answer contains video media');
+                const videoLine = sdp.split('\n').find(line => line.startsWith('m=video'));
+                log(`Video line: ${videoLine}`);
+            } else {
+                log('WARNING: Answer does not contain video media');
+            }
+            
+            const answer = new RTCSessionDescription({
+                type: 'answer',
+                sdp: sdp
+            });
+            await pc.setRemoteDescription(answer);
+            log('Set remote description (answer)');
+            
+            // Check statistics after setting answer
+            setTimeout(async () => {
+                try {
+                    const stats = await pc.getStats();
+                    stats.forEach(report => {
+                        if (report.type === 'inbound-rtp' && report.mediaType === 'video') {
+                            log(`Video stats: bytesReceived=${report.bytesReceived}, packetsReceived=${report.packetsReceived}`);
+                        }
+                    });
+                } catch (e) {
+                    log(`Error getting stats: ${e.message}`);
+                }
+            }, 2000);
+        }
+
+        async function handleIceCandidate(candidate, sdpMLineIndex) {
+            try {
+                await pc.addIceCandidate(new RTCIceCandidate({
+                    candidate: candidate,
+                    sdpMLineIndex: sdpMLineIndex
+                }));
+                log('Added ICE candidate');
+            } catch (error) {
+                log(`Error adding ICE candidate: ${error.message}`);
+            }
+        }
+
+        function disconnect() {
+            log('Disconnecting...');
+            cleanup();
+            updateStatus('Disconnected', 'disconnected');
+        }
+
+        function cleanup() {
+            if (pc) {
+                pc.close();
+                pc = null;
+            }
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+            document.getElementById('connectBtn').disabled = false;
+            document.getElementById('disconnectBtn').disabled = true;
+        }
+    </script>
+</body>
+</html>
