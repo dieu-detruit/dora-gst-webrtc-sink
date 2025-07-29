@@ -220,7 +220,6 @@ impl WebRTCServer {
                         
                         let msg = SignalingMessage::Answer {
                             sdp: answer_sdp,
-                            id: peer_id.to_string(),
                         };
 
                         if let Ok(json) = serde_json::to_string(&msg) {
@@ -243,7 +242,6 @@ impl WebRTCServer {
                             
                             let msg = SignalingMessage::Answer {
                                 sdp: answer_sdp,
-                                id: peer_id.to_string(),
                             };
 
                             if let Ok(json) = serde_json::to_string(&msg) {
@@ -320,7 +318,6 @@ impl WebRTCServer {
 
         webrtcbin.set_property_from_str("stun-server", "stun://stun.l.google.com:19302");
 
-        let peer_id_clone = peer_id.to_string();
         let ws_sender_clone = ws_sender.clone();
         webrtcbin.connect("on-ice-candidate", false, move |values| {
             // Handle potential errors in callback to avoid panic
@@ -351,7 +348,6 @@ impl WebRTCServer {
             let msg = SignalingMessage::Ice {
                 candidate,
                 sdp_mline_index: mline_index,
-                id: peer_id_clone.clone(),
             };
 
             if let Ok(json) = serde_json::to_string(&msg) {

@@ -269,8 +269,7 @@
                         this.ws.send(JSON.stringify({
                             type: 'ice',
                             candidate: event.candidate.candidate,
-                            sdpMLineIndex: event.candidate.sdpMLineIndex,
-                            id: this.clientId
+                            sdpMLineIndex: event.candidate.sdpMLineIndex
                         }));
                     }
                 };
@@ -303,8 +302,7 @@
                 
                 this.ws.send(JSON.stringify({
                     type: 'offer',
-                    sdp: offer.sdp,
-                    id: this.clientId
+                    sdp: offer.sdp
                 }));
                 
                 this.log('Sent offer');
