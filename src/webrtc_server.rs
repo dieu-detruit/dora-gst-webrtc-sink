@@ -116,12 +116,8 @@ impl WebRTCServer {
                 info!("Received offer from {}", peer_id);
                 let _answer_sdp = self.handle_offer(&sdp, peer_id, ws_sender).await?;
             }
-            SignalingMessage::Ice {
-                candidate,
-                sdp_mline_index,
-                ..
-            } => {
-                self.add_ice_candidate(peer_id, &candidate, sdp_mline_index)?;
+            SignalingMessage::Ice { candidate } => {
+                self.add_ice_candidate(peer_id, &candidate.candidate, candidate.sdp_mline_index)?;
             }
             _ => {
                 warn!("Unexpected message type");
@@ -412,8 +408,11 @@ impl WebRTCServer {
             };
 
             let msg = SignalingMessage::Ice {
-                candidate,
-                sdp_mline_index: mline_index,
+                candidate: crate::signaling::IceCandidate {
+                    candidate,
+                    sdp_mline_index: mline_index,
+                    sdp_mid: None,
+                },
             };
 
             if let Ok(json) = serde_json::to_string(&msg) {

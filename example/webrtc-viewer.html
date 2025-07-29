@@ -232,7 +232,7 @@
                                 await this.handleAnswer(data.sdp);
                                 break;
                             case 'ice':
-                                await this.handleIceCandidate(data.candidate, data.sdpMLineIndex);
+                                await this.handleIceCandidate(data.candidate.candidate, data.candidate.sdpMLineIndex);
                                 break;
                         }
                     };
@@ -268,8 +268,11 @@
                     if (event.candidate) {
                         this.ws.send(JSON.stringify({
                             type: 'ice',
-                            candidate: event.candidate.candidate,
-                            sdpMLineIndex: event.candidate.sdpMLineIndex
+                            candidate: {
+                                candidate: event.candidate.candidate,
+                                sdpMLineIndex: event.candidate.sdpMLineIndex,
+                                sdpMid: event.candidate.sdpMid
+                            }
                         }));
                     }
                 };
