@@ -23,17 +23,21 @@ async fn main() -> eyre::Result<()> {
 
     // WebSocket route with video_id parameter
     let source_manager_clone = source_manager.clone();
-    let websocket_route = warp::path!(String)
-        .and(warp::ws())
-        .map(move |video_id: String, ws: warp::ws::Ws| {
-            let source_manager = source_manager_clone.clone();
-            ws.on_upgrade(move |websocket| async move {
-                let (server, _) = source_manager.get_or_create_source(&video_id);
-                let client_id = Uuid::new_v4().to_string();
-                info!("New client {} connected to video source: {}", client_id, video_id);
-                server.handle_websocket(websocket, client_id).await;
-            })
-        });
+    let websocket_route =
+        warp::path!(String)
+            .and(warp::ws())
+            .map(move |video_id: String, ws: warp::ws::Ws| {
+                let source_manager = source_manager_clone.clone();
+                ws.on_upgrade(move |websocket| async move {
+                    let (server, _) = source_manager.get_or_create_source(&video_id);
+                    let client_id = Uuid::new_v4().to_string();
+                    info!(
+                        "New client {} connected to video source: {}",
+                        client_id, video_id
+                    );
+                    server.handle_websocket(websocket, client_id).await;
+                })
+            });
 
     let port = env::var("SIGNALING_PORT")
         .unwrap_or_else(|_| "8080".to_string())
@@ -42,21 +46,22 @@ async fn main() -> eyre::Result<()> {
 
     let server_task = tokio::spawn(async move {
         info!("WebRTC signaling server listening on port {}", port);
-        info!("Connect to ws://localhost:{}/VIDEO_ID for specific video streams", port);
-        warp::serve(websocket_route)
-            .run(([0, 0, 0, 0], port))
-            .await;
+        info!(
+            "Connect to ws://localhost:{}/VIDEO_ID for specific video streams",
+            port
+        );
+        warp::serve(websocket_route).run(([0, 0, 0, 0], port)).await;
     });
 
     let (_node, mut events) = DoraNode::init_from_env()?;
-    
+
     while let Some(event) = events.next().await {
         match event {
             Event::Input { id, data, metadata } => {
                 // Parse input ID to extract video_id
                 // Expected format: "video_id/frame" or just "image" for backward compatibility
                 let parts: Vec<&str> = id.as_str().split('/').collect();
-                
+
                 let (video_id, is_frame) = if parts.len() == 2 && parts[1] == "frame" {
                     (parts[0].to_string(), true)
                 } else if id.as_str() == "image" {

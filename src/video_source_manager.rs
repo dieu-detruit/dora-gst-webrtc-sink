@@ -1,7 +1,7 @@
+use log::info;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
-use log::info;
 
 use crate::webrtc_server::WebRTCServer;
 
@@ -24,18 +24,21 @@ impl VideoSourceManager {
         }
     }
 
-    pub fn get_or_create_source(&self, video_id: &str) -> (Arc<WebRTCServer>, mpsc::Sender<Vec<u8>>) {
+    pub fn get_or_create_source(
+        &self,
+        video_id: &str,
+    ) -> (Arc<WebRTCServer>, mpsc::Sender<Vec<u8>>) {
         let mut sources = self.sources.lock().unwrap();
-        
+
         if let Some(source) = sources.get(video_id) {
             (source.server.clone(), source.frame_sender.clone())
         } else {
             info!("Creating new video source: {}", video_id);
-            
+
             let (frame_sender, mut frame_receiver) = mpsc::channel::<Vec<u8>>(1);
             let frame_sender_clone = frame_sender.clone();
             let server = Arc::new(WebRTCServer::new(frame_sender_clone));
-            
+
             let server_clone = server.clone();
             let video_id_clone = video_id.to_string();
             tokio::spawn(async move {
@@ -44,15 +47,15 @@ impl VideoSourceManager {
                 }
                 info!("Frame receiver for {} stopped", video_id_clone);
             });
-            
+
             let source = VideoSource {
                 _video_id: video_id.to_string(),
                 server: server.clone(),
                 frame_sender: frame_sender.clone(),
             };
-            
+
             sources.insert(video_id.to_string(), source);
-            
+
             (server, frame_sender)
         }
     }

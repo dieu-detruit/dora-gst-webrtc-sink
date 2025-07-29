@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use anyhow::Context;
 use futures::stream::StreamExt;
 use futures::SinkExt;
@@ -7,6 +5,8 @@ use gstreamer::prelude::*;
 use gstreamer_app::AppSrc;
 use gstreamer_webrtc::{WebRTCICEConnectionState, WebRTCSessionDescription};
 use log::{error, info, warn};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use warp::ws::{Message, WebSocket};
 
@@ -35,7 +35,10 @@ impl WebRTCServer {
             match result {
                 Ok(msg) => {
                     if let Ok(text) = msg.to_str() {
-                        if let Err(e) = self.handle_signaling_message(text, &id, ws_sender.clone()).await {
+                        if let Err(e) = self
+                            .handle_signaling_message(text, &id, ws_sender.clone())
+                            .await
+                        {
                             error!("Error handling signaling message: {}", e);
                         }
                     }
@@ -57,7 +60,56 @@ impl WebRTCServer {
         peer_id: &str,
         ws_sender: Arc<Mutex<futures::stream::SplitSink<WebSocket, Message>>>,
     ) -> anyhow::Result<()> {
-        let message: SignalingMessage = serde_json::from_str(msg)?;
+        // Parse JSON with detailed error handling
+        let message: SignalingMessage = match serde_json::from_str(msg) {
+            Ok(m) => m,
+            Err(e) => {
+                // Log the raw message for debugging
+                error!("Failed to deserialize signaling message. Error: {}", e);
+                error!("Raw message: {}", msg);
+
+                // Try to parse as generic JSON to provide more context
+                if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(msg) {
+                    error!("Parsed JSON structure: {:#?}", json_value);
+
+                    // Check the type field
+                    if let Some(msg_type) = json_value.get("type") {
+                        error!("Message type field: {:?}", msg_type);
+                    } else {
+                        error!("Message missing 'type' field");
+                    }
+
+                    // For offer/answer messages, check sdp field
+                    if let Some(sdp) = json_value.get("sdp") {
+                        error!(
+                            "SDP field type: {}",
+                            if sdp.is_string() {
+                                "string"
+                            } else {
+                                "non-string"
+                            }
+                        );
+                    }
+
+                    // For ICE messages, check candidate field
+                    if let Some(candidate) = json_value.get("candidate") {
+                        error!(
+                            "Candidate field type: {}",
+                            if candidate.is_string() {
+                                "string"
+                            } else {
+                                "non-string"
+                            }
+                        );
+                    }
+                }
+
+                return Err(anyhow::anyhow!(
+                    "Failed to deserialize signaling message: {}",
+                    e
+                ));
+            }
+        };
 
         match message {
             SignalingMessage::Offer { sdp, .. } => {
@@ -86,7 +138,7 @@ impl WebRTCServer {
         ws_sender: Arc<Mutex<futures::stream::SplitSink<WebSocket, Message>>>,
     ) -> anyhow::Result<String> {
         let pipeline = self.create_pipeline(peer_id, ws_sender.clone())?;
-        
+
         let webrtcbin = pipeline
             .by_name("webrtc")
             .context("Failed to get webrtcbin")?;
@@ -95,14 +147,14 @@ impl WebRTCServer {
             .by_name("videosrc")
             .and_then(|e| e.dynamic_cast::<AppSrc>().ok())
             .context("Failed to get appsrc")?;
-        
+
         // Configure appsrc
         appsrc.set_property("is-live", true);
         appsrc.set_property("format", gstreamer::Format::Time);
 
         // Set pipeline to READY state before setting remote description
         pipeline.set_state(gstreamer::State::Ready)?;
-        
+
         // Wait for state change to complete
         let (state_change_return, _, _) = pipeline.state(gstreamer::ClockTime::from_seconds(5));
         if state_change_return.is_err() {
@@ -111,15 +163,12 @@ impl WebRTCServer {
 
         let ret = gstreamer_sdp::SDPMessage::parse_buffer(sdp.as_bytes())
             .map_err(|_| anyhow::anyhow!("Failed to parse SDP"))?;
-        
-        let offer = WebRTCSessionDescription::new(
-            gstreamer_webrtc::WebRTCSDPType::Offer,
-            ret,
-        );
+
+        let offer = WebRTCSessionDescription::new(gstreamer_webrtc::WebRTCSDPType::Offer, ret);
 
         let promise = gstreamer::Promise::new();
         webrtcbin.emit_by_name::<()>("set-remote-description", &[&offer, &promise]);
-        
+
         // Wait for set-remote-description to complete
         let result = promise.wait();
         match result {
@@ -129,7 +178,10 @@ impl WebRTCServer {
                     if let Ok(error_value) = reply.value("error") {
                         if let Ok(error) = error_value.get::<glib::Error>() {
                             error!("set-remote-description error: {}", error);
-                            return Err(anyhow::anyhow!("Failed to set remote description: {}", error));
+                            return Err(anyhow::anyhow!(
+                                "Failed to set remote description: {}",
+                                error
+                            ));
                         }
                     }
                 }
@@ -139,7 +191,7 @@ impl WebRTCServer {
                 return Err(anyhow::anyhow!("Failed to set remote description"));
             }
         }
-        
+
         // Additional delay to ensure state is propagated
         std::thread::sleep(std::time::Duration::from_millis(100));
 
@@ -151,16 +203,19 @@ impl WebRTCServer {
             appsrc.clone(),
         );
         self.peers.lock().unwrap().insert(peer_id.to_string(), peer);
-        
+
         // Now set pipeline to PLAYING state before creating answer
         pipeline.set_state(gstreamer::State::Playing)?;
-        
+
         // Wait for state change to complete
         let (state_change_return, _, _) = pipeline.state(gstreamer::ClockTime::from_seconds(5));
         if state_change_return.is_err() {
-            warn!("Pipeline state change to PLAYING not fully successful: {:?}", state_change_return);
+            warn!(
+                "Pipeline state change to PLAYING not fully successful: {:?}",
+                state_change_return
+            );
         }
-        
+
         // Give pipeline time to initialize
         std::thread::sleep(std::time::Duration::from_millis(200));
 
@@ -173,7 +228,7 @@ impl WebRTCServer {
                     return None;
                 }
             };
-            
+
             let _pad = match values[1].get::<gstreamer::Pad>() {
                 Ok(p) => p,
                 Err(_) => {
@@ -181,22 +236,21 @@ impl WebRTCServer {
                     return None;
                 }
             };
-            
+
             None
         });
 
-        
         // Use promise without change func first
         let promise = gstreamer::Promise::new();
-        
+
         webrtcbin.emit_by_name::<()>("create-answer", &[&None::<gstreamer::Structure>, &promise]);
-        
+
         // Wait for promise to complete
         let reply = promise.wait();
-        
+
         // Small delay to ensure the answer is fully processed
         std::thread::sleep(std::time::Duration::from_millis(100));
-        
+
         // Get the answer from promise reply
         match reply {
             gstreamer::PromiseResult::Replied => {
@@ -207,20 +261,22 @@ impl WebRTCServer {
                             error!("create-answer error: {}", error);
                         }
                     }
-                    
+
                     // The answer should be in the reply
-                    if let Ok(answer_value) = reply_struct.get::<gstreamer_webrtc::WebRTCSessionDescription>("answer") {
-                        
+                    if let Ok(answer_value) =
+                        reply_struct.get::<gstreamer_webrtc::WebRTCSessionDescription>("answer")
+                    {
                         // Set local description
                         let set_promise = gstreamer::Promise::new();
-                        webrtcbin.emit_by_name::<()>("set-local-description", &[&answer_value, &set_promise]);
+                        webrtcbin.emit_by_name::<()>(
+                            "set-local-description",
+                            &[&answer_value, &set_promise],
+                        );
                         let _ = set_promise.wait();
-                        
+
                         let answer_sdp = answer_value.sdp().to_string();
-                        
-                        let msg = SignalingMessage::Answer {
-                            sdp: answer_sdp,
-                        };
+
+                        let msg = SignalingMessage::Answer { sdp: answer_sdp };
 
                         if let Ok(json) = serde_json::to_string(&msg) {
                             let ws_sender_clone = ws_sender.clone();
@@ -235,14 +291,16 @@ impl WebRTCServer {
                         }
                     } else {
                         error!("No answer in reply structure");
-                        
+
                         // Try to get local-description as fallback
-                        if let Some(answer) = webrtcbin.property::<Option<gstreamer_webrtc::WebRTCSessionDescription>>("local-description") {
-                                let answer_sdp = answer.sdp().to_string();
-                            
-                            let msg = SignalingMessage::Answer {
-                                sdp: answer_sdp,
-                            };
+                        if let Some(answer) = webrtcbin.property::<Option<
+                            gstreamer_webrtc::WebRTCSessionDescription,
+                        >>(
+                            "local-description"
+                        ) {
+                            let answer_sdp = answer.sdp().to_string();
+
+                            let msg = SignalingMessage::Answer { sdp: answer_sdp };
 
                             if let Ok(json) = serde_json::to_string(&msg) {
                                 let ws_sender_clone = ws_sender.clone();
@@ -263,7 +321,7 @@ impl WebRTCServer {
                 error!("Promise failed or was interrupted");
             }
         }
-        
+
         Ok(String::new())
     }
 
@@ -287,7 +345,7 @@ impl WebRTCServer {
         let pipeline = gstreamer::parse::launch(&pipeline_str)?
             .dynamic_cast::<gstreamer::Pipeline>()
             .map_err(|_| anyhow::anyhow!("Failed to create pipeline"))?;
-        
+
         // Monitor pipeline messages
         let bus = pipeline.bus().unwrap();
         let peer_id_for_bus = peer_id.to_string();
@@ -297,12 +355,20 @@ impl WebRTCServer {
                 match msg.view() {
                     MessageView::StateChanged(_) => {}
                     MessageView::Error(err) => {
-                        error!("Pipeline {} error: {} ({})", 
-                            peer_id_for_bus, err.error(), err.debug().unwrap_or_default());
+                        error!(
+                            "Pipeline {} error: {} ({})",
+                            peer_id_for_bus,
+                            err.error(),
+                            err.debug().unwrap_or_default()
+                        );
                     }
                     MessageView::Warning(warn) => {
-                        warn!("Pipeline {} warning: {} ({})", 
-                            peer_id_for_bus, warn.error(), warn.debug().unwrap_or_default());
+                        warn!(
+                            "Pipeline {} warning: {} ({})",
+                            peer_id_for_bus,
+                            warn.error(),
+                            warn.debug().unwrap_or_default()
+                        );
                     }
                     MessageView::Eos(_) => {
                         break;
@@ -328,7 +394,7 @@ impl WebRTCServer {
                     return None;
                 }
             };
-            
+
             let mline_index = match values[1].get::<u32>() {
                 Ok(idx) => idx,
                 Err(_) => {
@@ -336,7 +402,7 @@ impl WebRTCServer {
                     return None;
                 }
             };
-            
+
             let candidate = match values[2].get::<String>() {
                 Ok(cand) => cand,
                 Err(_) => {
@@ -352,14 +418,14 @@ impl WebRTCServer {
 
             if let Ok(json) = serde_json::to_string(&msg) {
                 let ws_sender = ws_sender_clone.clone();
-                
+
                 // Use a dedicated runtime for sending messages from GStreamer threads
                 std::thread::spawn(move || {
                     // Create a small runtime just for this send operation
                     let rt = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build();
-                    
+
                     if let Ok(rt) = rt {
                         rt.block_on(async move {
                             if let Ok(mut sender) = ws_sender.lock() {
@@ -383,21 +449,29 @@ impl WebRTCServer {
                     return None;
                 }
             };
-            
+
             let state = _webrtc.property::<WebRTCICEConnectionState>("ice-connection-state");
             info!("ICE connection state for {}: {:?}", peer_id_clone, state);
-            
+
             // Also check connection state
-            let conn_state = _webrtc.property::<gstreamer_webrtc::WebRTCPeerConnectionState>("connection-state");
-            info!("Peer connection state for {}: {:?}", peer_id_clone, conn_state);
+            let conn_state =
+                _webrtc.property::<gstreamer_webrtc::WebRTCPeerConnectionState>("connection-state");
+            info!(
+                "Peer connection state for {}: {:?}",
+                peer_id_clone, conn_state
+            );
             None
         });
-
 
         Ok(pipeline)
     }
 
-    fn add_ice_candidate(&self, peer_id: &str, candidate: &str, mline_index: u32) -> anyhow::Result<()> {
+    fn add_ice_candidate(
+        &self,
+        peer_id: &str,
+        candidate: &str,
+        mline_index: u32,
+    ) -> anyhow::Result<()> {
         let peers = self.peers.lock().unwrap();
         if let Some(peer) = peers.get(peer_id) {
             peer.webrtcbin
