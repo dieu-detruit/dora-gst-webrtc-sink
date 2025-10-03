@@ -1,6 +1,6 @@
 [package]
 name = "dora-gst-webrtc-sink"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["dieu.detruit@gmail.com"]
 license = "MIT"
@@ -10,7 +10,7 @@ keywords = ["dora", "webrtc", "gstreamer", "video", "streaming"]
 categories = ["multimedia::video", "network-programming"]
 
 [dependencies]
-dora-node-api = "0.3"
+dora-node-api = "0.3.13"
 eyre = "0.6"
 arrow = "54"
 gstreamer = "0.23"
