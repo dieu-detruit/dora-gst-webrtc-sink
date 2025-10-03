@@ -24,6 +24,17 @@ This example demonstrates how to use `dora-gst-webrtc-sink` with `dora-gst-test-
 
 3. Click the "Connect" button to start viewing the stream
 
+### Optional: Running with TLS
+
+To enable TLS/SSL, set environment variables before running:
+```bash
+export SSL_CERT_PATH=/path/to/cert.pem
+export SSL_KEY_PATH=/path/to/key.pem
+./run_demo.sh
+```
+
+Then update the WebSocket URL in `webrtc-viewer.html` from `ws://` to `wss://`.
+
 ## Components
 
 - **dataflow.yml**: Dora dataflow configuration that connects test video source to WebRTC sink
@@ -47,3 +58,5 @@ This example demonstrates how to use `dora-gst-webrtc-sink` with `dora-gst-test-
 - If the build fails with "gstreamer-webrtc-1.0 not found", install the GStreamer WebRTC plugins
 - Make sure port 8080 is not already in use
 - Check browser console for WebRTC connection errors
+- When using TLS with self-signed certificates, accept the certificate warning in your browser first
+- Ensure both SSL_CERT_PATH and SSL_KEY_PATH point to valid certificate and key files

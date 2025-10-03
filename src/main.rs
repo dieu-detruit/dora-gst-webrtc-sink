@@ -44,13 +44,33 @@ async fn main() -> eyre::Result<()> {
         .parse::<u16>()
         .map_err(|e| eyre::eyre!("Invalid SIGNALING_PORT: {}", e))?;
 
+    let ssl_cert_path = env::var("SSL_CERT_PATH").ok();
+    let ssl_key_path = env::var("SSL_KEY_PATH").ok();
+
     let server_task = tokio::spawn(async move {
-        info!("WebRTC signaling server listening on port {}", port);
-        info!(
-            "Connect to ws://localhost:{}/VIDEO_ID for specific video streams",
-            port
-        );
-        warp::serve(websocket_route).run(([0, 0, 0, 0], port)).await;
+        match (ssl_cert_path, ssl_key_path) {
+            (Some(cert_path), Some(key_path)) => {
+                info!("WebRTC signaling server listening on port {} with TLS", port);
+                info!(
+                    "Connect to wss://localhost:{}/VIDEO_ID for specific video streams",
+                    port
+                );
+                warp::serve(websocket_route)
+                    .tls()
+                    .cert_path(cert_path)
+                    .key_path(key_path)
+                    .run(([0, 0, 0, 0], port))
+                    .await;
+            }
+            _ => {
+                info!("WebRTC signaling server listening on port {}", port);
+                info!(
+                    "Connect to ws://localhost:{}/VIDEO_ID for specific video streams",
+                    port
+                );
+                warp::serve(websocket_route).run(([0, 0, 0, 0], port)).await;
+            }
+        }
     });
 
     let (_node, mut events) = DoraNode::init_from_env()?;

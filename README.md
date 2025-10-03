@@ -14,6 +14,7 @@ A WebRTC sink node for [dora-rs](https://github.com/dora-rs/dora) that streams v
 - 👥 **Multiple clients per source**: Each video source can serve multiple WebRTC clients
 - 🔧 Dynamic video source management
 - ⚙️ Configurable signaling server port via environment variable
+- 🔒 Optional TLS/SSL support for secure WebSocket connections
 
 ## Prerequisites
 
@@ -68,7 +69,11 @@ cd example
 ### Environment Variables
 
 - `SIGNALING_PORT`: WebSocket signaling server port (default: 8080)
+- `SSL_CERT_PATH`: Path to SSL certificate file for TLS (optional)
+- `SSL_KEY_PATH`: Path to SSL private key file for TLS (optional)
 - `RUST_LOG`: Log level (default: info)
+
+**Note**: Both `SSL_CERT_PATH` and `SSL_KEY_PATH` must be set to enable TLS. If either is missing, the server will run without TLS.
 
 ### Input Format
 
@@ -92,13 +97,21 @@ All inputs expect:
 ### WebRTC Client Connection
 
 Connect to the WebSocket signaling server at:
+
+**Without TLS:**
 ```
 ws://localhost:8080/<video_id>
 ```
 
+**With TLS:**
+```
+wss://localhost:8080/<video_id>
+```
+
 Example URLs:
-- `ws://localhost:8080/camera1` - First camera
-- `ws://localhost:8080/camera2` - Second camera
+- `ws://localhost:8080/camera1` - First camera (without TLS)
+- `ws://localhost:8080/camera2` - Second camera (without TLS)
+- `wss://localhost:8080/camera1` - First camera (with TLS)
 - `ws://localhost:8080/default` - Legacy support
 
 ## Example Dataflow Configuration
@@ -210,6 +223,8 @@ gst-inspect-1.0 webrtcbin
 1. Check firewall settings for port 8080 (signaling)
 2. Ensure STUN server is accessible (uses Google's public STUN by default)
 3. Check browser console for WebRTC errors
+4. If using TLS, ensure both certificate and key files exist at the specified paths
+5. For self-signed certificates, you may need to accept the certificate in your browser first
 
 ### Performance issues
 - Adjust VP8 encoding parameters in `create_pipeline()`
